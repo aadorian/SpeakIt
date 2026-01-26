@@ -122,4 +122,31 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Custom scroll styling for text container */
+  .text-scroll-container {
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.3) transparent;
+  }
+
+  .text-scroll-container::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .text-scroll-container::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.3);
+    border-radius: 4px;
+  }
+
+  .text-scroll-container::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Reduce motion for accessibility */
+  @media (prefers-reduced-motion: reduce) {
+    .text-scroll-container {
+      scroll-behavior: auto;
+    }
+  }
 }

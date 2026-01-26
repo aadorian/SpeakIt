@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Play, Pause, Square, Volume2, Gauge, Download, Loader2, Music } from "lucide-react"
+import { Play, Pause, Square, Volume2, Gauge, Download, Loader2, Music, FileText, Subtitles } from "lucide-react"
 
 export function TextToSpeech() {
   const [text, setText] = useState("")
@@ -32,8 +32,13 @@ export function TextToSpeech() {
   const [words, setWords] = useState<string[]>([])
   const [sentences, setSentences] = useState<{ text: string; startIndex: number; endIndex: number }[]>([])
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1)
+  const [viewMode, setViewMode] = useState<'full-text' | 'netflix'>('full-text')
+  const [paragraphs, setParagraphs] = useState<Array<{ text: string; words: string[] }>>([])
+  const [isUserScrolling, setIsUserScrolling] = useState(false)
   const highlightRef = useRef<HTMLSpanElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const textContainerRef = useRef<HTMLDivElement>(null)
+  const userScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     const loadVoices = () => {
@@ -55,14 +60,40 @@ export function TextToSpeech() {
 
   // Auto-scroll to current word
   useEffect(() => {
-    if (highlightRef.current) {
+    if (viewMode === 'full-text' && highlightRef.current && !isUserScrolling && textContainerRef.current) {
+      const container = textContainerRef.current
+      const element = highlightRef.current
+      const containerRect = container.getBoundingClientRect()
+      const elementRect = element.getBoundingClientRect()
+
+      // Check if element is outside comfortable reading zone (40%-60%)
+      const relativePosition = (elementRect.top - containerRect.top) / containerRect.height
+
+      if (relativePosition > 0.6 || relativePosition < 0.4) {
+        element.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+          inline: 'nearest'
+        })
+      }
+    } else if (viewMode === 'netflix' && highlightRef.current) {
+      // For Netflix view, always scroll to center
       highlightRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
         inline: 'nearest'
       })
     }
-  }, [currentWordIndex])
+  }, [currentWordIndex, isUserScrolling, viewMode])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const handlePlay = useCallback(() => {
     if (isPaused) {
@@ -81,6 +112,14 @@ export function TextToSpeech() {
     setWords(textWords)
     setCurrentWordIndex(-1)
     setCurrentCharIndex(-1)
+
+    // Parse paragraphs for full-text view
+    const textParagraphs = text.split(/\n\n+/).filter(p => p.trim())
+    const paragraphsWithWords = textParagraphs.map(para => {
+      const paraWords = para.split(/(\s+)/).filter(w => w.trim().length > 0)
+      return { text: para, words: paraWords }
+    })
+    setParagraphs(paragraphsWithWords)
 
     // Parse sentences for context highlighting
     const sentenceRegex = /[^.!?]*[.!?]+/g
@@ -306,6 +345,20 @@ export function TextToSpeech() {
     }
   }
 
+  // User scroll detection handler
+  const handleUserScroll = useCallback(() => {
+    setIsUserScrolling(true)
+
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current)
+    }
+
+    // Resume auto-scroll after 3 seconds
+    userScrollTimeoutRef.current = setTimeout(() => {
+      setIsUserScrolling(false)
+    }, 3000)
+  }, [])
+
   const speedLabels = [
     { value: 0.5, label: "0.5x" },
     { value: 0.75, label: "0.75x" },
@@ -380,9 +433,12 @@ export function TextToSpeech() {
             </div>
           )}
 
-          {/* Netflix-style subtitle display - shown when playing/paused */}
+          {/* Display view - shown when playing/paused */}
           {(isPlaying || isPaused) && words.length > 0 && (
-            <div className="relative bg-[#050505] min-h-[320px] flex flex-col overflow-hidden">
+            <>
+              {viewMode === 'netflix' ? (
+                /* Netflix-style subtitle display */
+                <div className="relative bg-[#050505] min-h-[320px] flex flex-col overflow-hidden">
               {/* Animated background glow */}
               <div 
                 className="absolute inset-0 opacity-30 transition-all duration-500"
@@ -433,20 +489,21 @@ export function TextToSpeech() {
                           <span
                             key={actualIndex}
                             ref={isCurrentWord ? highlightRef : null}
-                            className={`inline-block transition-all duration-100 ease-out mx-1 ${
-                              isCurrentWord 
-                                ? "text-foreground scale-105" 
-                                : isPastWord 
-                                  ? "text-foreground" 
+                            className={`inline-block transition-all duration-150 ease-out mx-1 px-2 py-1 rounded-md ${
+                              isCurrentWord
+                                ? "text-foreground scale-110 font-bold bg-gradient-to-r from-primary/30 via-primary/20 to-primary/10 border-b-2 border-primary"
+                                : isPastWord
+                                  ? "text-foreground/60"
                                   : "text-foreground"
                             }`}
                             style={{
                               opacity,
-                              textShadow: isCurrentWord 
-                                ? '0 0 30px rgba(255,255,255,0.5), 0 0 60px rgba(100,150,255,0.3), 0 4px 12px rgba(0,0,0,0.9)' 
+                              textShadow: isCurrentWord
+                                ? '0 0 30px rgba(255,255,255,0.6), 0 0 60px rgba(100,150,255,0.4), 0 4px 12px rgba(0,0,0,0.9)'
                                 : '0 2px 8px rgba(0,0,0,0.9)',
-                              transform: isCurrentWord ? 'scale(1.05)' : 'scale(1)',
+                              transform: isCurrentWord ? 'scale(1.1)' : 'scale(1)',
                               color: isCurrentWord ? '#ffffff' : undefined,
+                              boxShadow: isCurrentWord ? '0 4px 16px rgba(100, 150, 255, 0.4)' : undefined,
                             }}
                           >
                             {word}
@@ -456,11 +513,15 @@ export function TextToSpeech() {
                     })()}
                   </p>
                   
-                  {/* Animated underline for current word */}
-                  <div className="mt-3 flex justify-center">
-                    <div 
-                      className="h-0.5 bg-gradient-to-r from-transparent via-primary to-transparent transition-all duration-200"
-                      style={{ width: currentWordIndex >= 0 ? '120px' : '0px', opacity: 0.6 }}
+                  {/* Animated glow bar for current word */}
+                  <div className="mt-4 flex justify-center">
+                    <div
+                      className="h-1 bg-gradient-to-r from-transparent via-primary to-transparent transition-all duration-200 rounded-full"
+                      style={{
+                        width: currentWordIndex >= 0 ? '150px' : '0px',
+                        opacity: 0.8,
+                        boxShadow: '0 0 20px rgba(100, 150, 255, 0.6)'
+                      }}
                     />
                   </div>
                 </div>
@@ -507,6 +568,71 @@ export function TextToSpeech() {
                 </div>
               </div>
             </div>
+              ) : (
+                /* Full Text View */
+                <div className="relative bg-card rounded-lg border">
+                  {/* Ambient background */}
+                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
+                       style={{
+                         background: 'radial-gradient(ellipse at center, hsl(var(--primary)) 0%, transparent 70%)'
+                       }} />
+
+                  {/* Scrollable text container */}
+                  <div
+                    ref={textContainerRef}
+                    className="relative overflow-y-auto max-h-[500px] px-8 py-12 text-scroll-container"
+                    onScroll={handleUserScroll}
+                  >
+                    <div className="max-w-3xl mx-auto space-y-6">
+                      {paragraphs.map((para, pIdx) => {
+                        // Calculate the global word offset for this paragraph
+                        let globalWordOffset = 0
+                        for (let i = 0; i < pIdx; i++) {
+                          globalWordOffset += paragraphs[i].words.length
+                        }
+
+                        return (
+                          <p key={pIdx} className="text-base md:text-lg leading-relaxed">
+                            {para.words.map((word, wIdx) => {
+                              const globalWordIdx = globalWordOffset + wIdx
+                              const isCurrent = globalWordIdx === currentWordIndex
+                              const isPast = globalWordIdx < currentWordIndex
+
+                              return (
+                                <span
+                                  key={wIdx}
+                                  ref={isCurrent ? highlightRef : null}
+                                  className={`inline-block transition-all duration-150 ease-out mx-0.5 px-1 rounded-sm ${
+                                    isCurrent
+                                      ? "bg-gradient-to-r from-primary/20 via-primary/10 to-transparent scale-[1.02] font-semibold border-b-2 border-primary"
+                                      : isPast
+                                        ? "opacity-40 blur-[0.3px]"
+                                        : "opacity-70"
+                                  }`}
+                                  style={isCurrent ? {
+                                    boxShadow: '0 2px 8px hsl(var(--primary) / 0.2)'
+                                  } : {}}
+                                >
+                                  {word}
+                                </span>
+                              )
+                            })}
+                          </p>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Progress bar at bottom */}
+                  <div className="sticky bottom-0 left-0 right-0 h-1 bg-muted">
+                    <div
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: `${(currentWordIndex / words.length) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -570,6 +696,32 @@ export function TextToSpeech() {
           </p>
         </CardContent>
       </Card>
+
+      {/* View Mode Toggle - shown only when playing/paused */}
+      {(isPlaying || isPaused) && (
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-center gap-2">
+              <Button
+                variant={viewMode === 'full-text' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('full-text')}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Full Text
+              </Button>
+              <Button
+                variant={viewMode === 'netflix' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('netflix')}
+              >
+                <Subtitles className="w-4 h-4 mr-2" />
+                Focus Mode
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Controls */}
       <Card className="border-border bg-card">
