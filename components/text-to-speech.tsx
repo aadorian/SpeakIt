@@ -90,38 +90,61 @@ export function TextToSpeech() {
     }
   }, [])
 
-  // Word highlighting helper for audio playback
+  // Word highlighting helper for audio playback - syncs with actual audio time
   const startWordHighlighting = useCallback(() => {
     if (wordHighlightIntervalRef.current) {
       clearInterval(wordHighlightIntervalRef.current)
     }
     
+    if (!audioRef.current || typeof window === 'undefined') return
+    
     const textWords = text.split(/(\s+)/).filter(word => word.trim().length > 0)
     const totalWords = textWords.length
     if (totalWords === 0) return
 
-    // Estimate audio duration (average speaking rate: ~150 words per minute)
-    // Use actual audio duration if available
-    let estimatedDuration = (totalWords / 150) * 60 * 1000 / speed // in milliseconds
-    
-    if (audioRef.current && audioRef.current.duration) {
-      estimatedDuration = audioRef.current.duration * 1000
+    // Wait for audio metadata to load to get actual duration
+    const checkDuration = () => {
+      if (audioRef.current && audioRef.current.duration && audioRef.current.duration > 0 && !isNaN(audioRef.current.duration)) {
+        const audioDuration = audioRef.current.duration * 1000 // Convert to milliseconds
+        
+        let currentIndex = 0
+        const audioStartTime = audioRef.current.currentTime * 1000
+        
+        wordHighlightIntervalRef.current = setInterval(() => {
+          if (!audioRef.current || audioRef.current.paused || audioRef.current.ended) {
+            if (wordHighlightIntervalRef.current) {
+              clearInterval(wordHighlightIntervalRef.current)
+            }
+            return
+          }
+          
+          // Calculate current position based on actual audio playback time
+          const currentAudioTime = audioRef.current.currentTime * 1000
+          const elapsedTime = Math.max(0, currentAudioTime - audioStartTime)
+          const progress = Math.min(1, elapsedTime / audioDuration)
+          const targetIndex = Math.min(Math.floor(progress * totalWords), totalWords - 1)
+          
+          if (targetIndex !== currentIndex && targetIndex >= 0) {
+            currentIndex = targetIndex
+            setCurrentWordIndex(currentIndex)
+          }
+          
+          // Stop if audio ended
+          if (audioRef.current.ended || currentIndex >= totalWords - 1) {
+            setCurrentWordIndex(totalWords - 1)
+            if (wordHighlightIntervalRef.current) {
+              clearInterval(wordHighlightIntervalRef.current)
+            }
+          }
+        }, 50) // Check every 50ms for smooth updates
+      } else {
+        // Retry after a short delay if duration not loaded yet
+        setTimeout(checkDuration, 100)
+      }
     }
     
-    const wordInterval = Math.max(50, estimatedDuration / totalWords) // Minimum 50ms per word
-
-    let currentIndex = 0
-    wordHighlightIntervalRef.current = setInterval(() => {
-      if (currentIndex < totalWords && audioRef.current && !audioRef.current.paused) {
-        setCurrentWordIndex(currentIndex)
-        currentIndex++
-      } else {
-        if (wordHighlightIntervalRef.current) {
-          clearInterval(wordHighlightIntervalRef.current)
-        }
-      }
-    }, wordInterval)
-  }, [text, speed])
+    checkDuration()
+  }, [text])
 
   const handlePlay = useCallback(async () => {
     if (isPaused) {
@@ -212,11 +235,20 @@ export function TextToSpeech() {
         setCurrentWordIndex(-1)
       }
 
+      // Wait for audio to be ready before starting
+      audioRef.current.onloadedmetadata = () => {
+        startWordHighlighting()
+      }
+      
       await audioRef.current.play()
       setIsPlaying(true)
       setIsPaused(false)
       setIsLoadingAudio(false)
-      startWordHighlighting()
+      
+      // Start highlighting after a short delay to ensure audio is playing
+      setTimeout(() => {
+        startWordHighlighting()
+      }, 100)
     } catch (error: any) {
       console.error('Edge-TTS Error:', error)
       setIsLoadingAudio(false)
@@ -227,9 +259,7 @@ export function TextToSpeech() {
   const handlePause = useCallback(() => {
     if (isPlaying && !isPaused && audioRef.current) {
       audioRef.current.pause()
-      if (wordHighlightIntervalRef.current) {
-        clearInterval(wordHighlightIntervalRef.current)
-      }
+      // Keep the interval running but it will check paused state
       setIsPaused(true)
       setIsPlaying(false)
     }
