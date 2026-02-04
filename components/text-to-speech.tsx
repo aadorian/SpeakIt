@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Play, Pause, Square, Volume2, Gauge, Download, Loader2, Music, FileText, Subtitles } from "lucide-react"
+import { Play, Pause, Square, Volume2, Gauge, Download, Loader2, FileText, Subtitles, Sparkles } from "lucide-react"
 
 export function TextToSpeech() {
   const [text, setText] = useState("")
@@ -20,43 +20,31 @@ export function TextToSpeech() {
   const [isPaused, setIsPaused] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [volume, setVolume] = useState(1)
-  const [pitch, setPitch] = useState(1)
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [selectedVoice, setSelectedVoice] = useState<string>("")
-  const [voiceFilter, setVoiceFilter] = useState<"all" | "en">("en")
-  const [utterance, setUtterance] = useState<SpeechSynthesisUtterance | null>(null)
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState("")
   const [currentWordIndex, setCurrentWordIndex] = useState(-1)
-  const [currentCharIndex, setCurrentCharIndex] = useState(-1)
   const [words, setWords] = useState<string[]>([])
-  const [sentences, setSentences] = useState<{ text: string; startIndex: number; endIndex: number }[]>([])
-  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1)
   const [viewMode, setViewMode] = useState<'full-text' | 'netflix'>('full-text')
   const [paragraphs, setParagraphs] = useState<Array<{ text: string; words: string[] }>>([])
   const [isUserScrolling, setIsUserScrolling] = useState(false)
+  const [selectedVoice, setSelectedVoice] = useState("en-US-AriaNeural")
   const highlightRef = useRef<HTMLSpanElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const textContainerRef = useRef<HTMLDivElement>(null)
   const userScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const wordHighlightIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  useEffect(() => {
-    const loadVoices = () => {
-      const availableVoices = window.speechSynthesis.getVoices()
-      setVoices(availableVoices)
-      if (availableVoices.length > 0 && !selectedVoice) {
-        const englishVoice = availableVoices.find(v => v.lang.startsWith("en")) || availableVoices[0]
-        setSelectedVoice(englishVoice.name)
-      }
-    }
-
-    loadVoices()
-    window.speechSynthesis.onvoiceschanged = loadVoices
-
-    return () => {
-      window.speechSynthesis.cancel()
-    }
-  }, [selectedVoice])
+  // Popular Edge-TTS voices
+  const edgeVoices = [
+    { id: "en-US-AriaNeural", name: "Aria", description: "Friendly, warm female (US)" },
+    { id: "en-US-JennyNeural", name: "Jenny", description: "Professional, clear female (US)" },
+    { id: "en-US-GuyNeural", name: "Guy", description: "Casual, friendly male (US)" },
+    { id: "en-GB-SoniaNeural", name: "Sonia", description: "Elegant, refined female (UK)" },
+    { id: "en-AU-NatashaNeural", name: "Natasha", description: "Friendly, energetic female (AU)" },
+    { id: "en-CA-ClaraNeural", name: "Clara", description: "Warm, conversational female (CA)" },
+  ]
 
   // Auto-scroll to current word
   useEffect(() => {
@@ -92,26 +80,77 @@ export function TextToSpeech() {
       if (userScrollTimeoutRef.current) {
         clearTimeout(userScrollTimeoutRef.current)
       }
+      if (wordHighlightIntervalRef.current) {
+        clearInterval(wordHighlightIntervalRef.current)
+      }
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
     }
   }, [])
 
-  const handlePlay = useCallback(() => {
+  // Word highlighting helper for audio playback
+  const startWordHighlighting = useCallback(() => {
+    if (wordHighlightIntervalRef.current) {
+      clearInterval(wordHighlightIntervalRef.current)
+    }
+    
+    const textWords = text.split(/(\s+)/).filter(word => word.trim().length > 0)
+    const totalWords = textWords.length
+    if (totalWords === 0) return
+
+    // Estimate audio duration (average speaking rate: ~150 words per minute)
+    // Use actual audio duration if available
+    let estimatedDuration = (totalWords / 150) * 60 * 1000 / speed // in milliseconds
+    
+    if (audioRef.current && audioRef.current.duration) {
+      estimatedDuration = audioRef.current.duration * 1000
+    }
+    
+    const wordInterval = Math.max(50, estimatedDuration / totalWords) // Minimum 50ms per word
+
+    let currentIndex = 0
+    wordHighlightIntervalRef.current = setInterval(() => {
+      if (currentIndex < totalWords && audioRef.current && !audioRef.current.paused) {
+        setCurrentWordIndex(currentIndex)
+        currentIndex++
+      } else {
+        if (wordHighlightIntervalRef.current) {
+          clearInterval(wordHighlightIntervalRef.current)
+        }
+      }
+    }, wordInterval)
+  }, [text, speed])
+
+  const handlePlay = useCallback(async () => {
     if (isPaused) {
-      window.speechSynthesis.resume()
-      setIsPaused(false)
-      setIsPlaying(true)
+      if (audioRef.current) {
+        audioRef.current.play()
+        setIsPaused(false)
+        setIsPlaying(true)
+        startWordHighlighting()
+      }
       return
     }
 
-    if (!text.trim()) return
+    if (!text.trim()) {
+      return
+    }
 
-    window.speechSynthesis.cancel()
+    // Stop any current playback
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+    if (wordHighlightIntervalRef.current) {
+      clearInterval(wordHighlightIntervalRef.current)
+    }
 
     // Parse text into words for highlighting
     const textWords = text.split(/(\s+)/).filter(word => word.trim().length > 0)
     setWords(textWords)
     setCurrentWordIndex(-1)
-    setCurrentCharIndex(-1)
 
     // Parse paragraphs for full-text view
     const textParagraphs = text.split(/\n\n+/).filter(p => p.trim())
@@ -121,227 +160,159 @@ export function TextToSpeech() {
     })
     setParagraphs(paragraphsWithWords)
 
-    // Parse sentences for context highlighting
-    const sentenceRegex = /[^.!?]*[.!?]+/g
-    const parsedSentences: { text: string; startIndex: number; endIndex: number }[] = []
-    let match
-    let charCount = 0
-    while ((match = sentenceRegex.exec(text)) !== null) {
-      parsedSentences.push({
-        text: match[0].trim(),
-        startIndex: charCount,
-        endIndex: charCount + match[0].length
+    setIsLoadingAudio(true)
+    try {
+      // Convert speed (0.5-2.0) to Edge-TTS rate (-50% to +100%)
+      const rate = Math.round((speed - 1) * 100)
+      
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: text,
+          voice: selectedVoice,
+          rate: rate,
+          pitch: 0, // Can be adjusted if needed
+        }),
       })
-      charCount = match.index + match[0].length
-    }
-    // Handle text without sentence endings
-    if (parsedSentences.length === 0) {
-      parsedSentences.push({ text: text, startIndex: 0, endIndex: text.length })
-    }
-    setSentences(parsedSentences)
-    setCurrentSentenceIndex(0)
 
-    const newUtterance = new SpeechSynthesisUtterance(text)
-    newUtterance.rate = speed
-    newUtterance.volume = volume
-    newUtterance.pitch = pitch
-    
-    const voice = voices.find(v => v.name === selectedVoice)
-    if (voice) {
-      newUtterance.voice = voice
-    }
-
-    // Track word and sentence boundaries for highlighting
-    let wordIndex = 0
-    newUtterance.onboundary = (event) => {
-      if (event.name === 'word') {
-        setCurrentWordIndex(wordIndex)
-        setCurrentCharIndex(event.charIndex)
-        
-        // Update current sentence based on character index
-        const sentenceIdx = parsedSentences.findIndex(
-          s => event.charIndex >= s.startIndex && event.charIndex < s.endIndex
-        )
-        if (sentenceIdx !== -1) {
-          setCurrentSentenceIndex(sentenceIdx)
-        }
-        wordIndex++
-      } else if (event.name === 'sentence') {
-        // Some browsers fire sentence events
-        const sentenceIdx = parsedSentences.findIndex(
-          s => event.charIndex >= s.startIndex && event.charIndex < s.endIndex
-        )
-        if (sentenceIdx !== -1) {
-          setCurrentSentenceIndex(sentenceIdx)
-        }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to generate speech')
       }
-    }
 
-    newUtterance.onend = () => {
-      setIsPlaying(false)
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+      
+      // Create or update audio element
+      if (!audioRef.current) {
+        audioRef.current = new Audio()
+      }
+      
+      audioRef.current.src = audioUrl
+      audioRef.current.volume = volume
+      audioRef.current.playbackRate = speed
+      
+      audioRef.current.onended = () => {
+        setIsPlaying(false)
+        setIsPaused(false)
+        setCurrentWordIndex(-1)
+        if (wordHighlightIntervalRef.current) {
+          clearInterval(wordHighlightIntervalRef.current)
+        }
+        URL.revokeObjectURL(audioUrl)
+      }
+
+      audioRef.current.onerror = () => {
+        setIsPlaying(false)
+        setIsPaused(false)
+        setIsLoadingAudio(false)
+        setCurrentWordIndex(-1)
+      }
+
+      await audioRef.current.play()
+      setIsPlaying(true)
       setIsPaused(false)
-      setCurrentWordIndex(-1)
-      setCurrentCharIndex(-1)
-      setCurrentSentenceIndex(-1)
+      setIsLoadingAudio(false)
+      startWordHighlighting()
+    } catch (error: any) {
+      console.error('Edge-TTS Error:', error)
+      setIsLoadingAudio(false)
+      alert(error.message || 'Failed to generate speech.')
     }
-
-    newUtterance.onerror = () => {
-      setIsPlaying(false)
-      setIsPaused(false)
-      setCurrentWordIndex(-1)
-      setCurrentCharIndex(-1)
-      setCurrentSentenceIndex(-1)
-    }
-
-    setUtterance(newUtterance)
-    window.speechSynthesis.speak(newUtterance)
-    setIsPlaying(true)
-    setIsPaused(false)
-  }, [text, speed, volume, pitch, voices, selectedVoice, isPaused])
+  }, [text, speed, volume, selectedVoice, startWordHighlighting])
 
   const handlePause = useCallback(() => {
-    if (isPlaying && !isPaused) {
-      window.speechSynthesis.pause()
+    if (isPlaying && !isPaused && audioRef.current) {
+      audioRef.current.pause()
+      if (wordHighlightIntervalRef.current) {
+        clearInterval(wordHighlightIntervalRef.current)
+      }
       setIsPaused(true)
       setIsPlaying(false)
     }
   }, [isPlaying, isPaused])
 
   const handleStop = useCallback(() => {
-    window.speechSynthesis.cancel()
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+    if (wordHighlightIntervalRef.current) {
+      clearInterval(wordHighlightIntervalRef.current)
+    }
     setIsPlaying(false)
     setIsPaused(false)
     setCurrentWordIndex(-1)
-    setCurrentCharIndex(-1)
-    setCurrentSentenceIndex(-1)
   }, [])
 
   const handleDownload = useCallback(async () => {
-    if (!text.trim() || isRecording) return
+    if (!text.trim() || isRecording) {
+      return
+    }
 
     setIsRecording(true)
-    setDownloadProgress("Preparing audio...")
+    setDownloadProgress("Generating audio...")
 
     try {
-      // Create audio context
-      const audioContext = new AudioContext()
-      const destination = audioContext.createMediaStreamDestination()
+      // Convert speed (0.5-2.0) to Edge-TTS rate (-50% to +100%)
+      const rate = Math.round((speed - 1) * 100)
       
-      // Create an oscillator to ensure we have audio stream
-      const oscillator = audioContext.createOscillator()
-      oscillator.connect(destination)
-      
-      // Set up media recorder
-      const mediaRecorder = new MediaRecorder(destination.stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
-      
-      const audioChunks: Blob[] = []
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data)
-        }
-      }
-
-      // Create utterance for recording
-      const recordUtterance = new SpeechSynthesisUtterance(text)
-      recordUtterance.rate = speed
-      recordUtterance.volume = volume
-      
-      const voice = voices.find(v => v.name === selectedVoice)
-      if (voice) {
-        recordUtterance.voice = voice
-      }
-
-      setDownloadProgress("Recording speech...")
-
-      // Start recording
-      mediaRecorder.start(100)
-      
-      await new Promise<void>((resolve, reject) => {
-        recordUtterance.onend = () => {
-          setTimeout(() => {
-            mediaRecorder.stop()
-            resolve()
-          }, 500)
-        }
-        
-        recordUtterance.onerror = (e) => {
-          mediaRecorder.stop()
-          reject(e)
-        }
-
-        window.speechSynthesis.speak(recordUtterance)
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: text,
+          voice: selectedVoice,
+          rate: rate,
+          pitch: 0,
+        }),
       })
 
-      setDownloadProgress("Processing...")
-
-      // Wait for recorder to finish
-      await new Promise<void>((resolve) => {
-        mediaRecorder.onstop = () => resolve()
-        if (mediaRecorder.state === 'inactive') resolve()
-      })
-
-      // Create blob and download
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
-      
-      // If we got audio data, download it
-      if (audioBlob.size > 0) {
-        const url = URL.createObjectURL(audioBlob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `speech-${Date.now()}.webm`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-        setDownloadProgress("Downloaded!")
-      } else {
-        // Fallback: create a text file with instructions
-        setDownloadProgress("Creating text file...")
-        const textBlob = new Blob([text], { type: 'text/plain' })
-        const url = URL.createObjectURL(textBlob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `speech-text-${Date.now()}.txt`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-        setDownloadProgress("Text file downloaded!")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to generate speech')
       }
 
-      audioContext.close()
-    } catch (error) {
+      const audioBlob = await response.blob()
+      
+      // Download the audio file
+      const url = URL.createObjectURL(audioBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `speech-${Date.now()}.mp3`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      setDownloadProgress("Downloaded!")
+    } catch (error: any) {
       console.error('Download error:', error)
-      setDownloadProgress("Download failed")
+      setDownloadProgress(error.message || "Download failed")
     } finally {
       setTimeout(() => {
         setIsRecording(false)
         setDownloadProgress("")
       }, 2000)
     }
-  }, [text, speed, volume, voices, selectedVoice, isRecording])
+  }, [text, speed, selectedVoice, isRecording])
 
   const handleSpeedChange = (value: number[]) => {
     setSpeed(value[0])
-    if (utterance) {
-      utterance.rate = value[0]
+    if (audioRef.current) {
+      audioRef.current.playbackRate = value[0]
     }
   }
 
   const handleVolumeChange = (value: number[]) => {
     setVolume(value[0])
-    if (utterance) {
-      utterance.volume = value[0]
-    }
-  }
-
-  const handlePitchChange = (value: number[]) => {
-    setPitch(value[0])
-    if (utterance) {
-      utterance.pitch = value[0]
+    if (audioRef.current) {
+      audioRef.current.volume = value[0]
     }
   }
 
@@ -367,37 +338,6 @@ export function TextToSpeech() {
     { value: 1.5, label: "1.5x" },
     { value: 2, label: "2x" },
   ]
-
-  // Filter voices based on language selection
-  const filteredVoices = voices.filter(voice => {
-    if (voiceFilter === "all") return true
-    return voice.lang.startsWith("en")
-  })
-
-  // Group English voices by accent/region
-  const groupedVoices = filteredVoices.reduce((acc, voice) => {
-    let group = "Other"
-    if (voice.lang === "en-US") group = "English (US)"
-    else if (voice.lang === "en-GB") group = "English (UK)"
-    else if (voice.lang === "en-AU") group = "English (Australia)"
-    else if (voice.lang === "en-IN") group = "English (India)"
-    else if (voice.lang === "en-IE") group = "English (Ireland)"
-    else if (voice.lang === "en-ZA") group = "English (South Africa)"
-    else if (voice.lang === "en-CA") group = "English (Canada)"
-    else if (voice.lang.startsWith("en")) group = "English (Other)"
-    else if (voiceFilter === "all") {
-      const langName = new Intl.DisplayNames(['en'], { type: 'language' })
-      try {
-        group = langName.of(voice.lang.split('-')[0]) || "Other"
-      } catch {
-        group = "Other"
-      }
-    }
-    
-    if (!acc[group]) acc[group] = []
-    acc[group].push(voice)
-    return acc
-  }, {} as Record<string, SpeechSynthesisVoice[]>)
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6">
@@ -640,60 +580,37 @@ export function TextToSpeech() {
       {/* Voice Selection */}
       <Card className="border-border bg-card">
         <CardContent className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <label className="block text-sm font-medium text-muted-foreground">
-              Voice
-            </label>
-            <div className="flex items-center gap-1 bg-secondary rounded-lg p-1">
-              <button
-                onClick={() => setVoiceFilter("en")}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                  voiceFilter === "en" 
-                    ? "bg-primary text-primary-foreground" 
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                English
-              </button>
-              <button
-                onClick={() => setVoiceFilter("all")}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                  voiceFilter === "all" 
-                    ? "bg-primary text-primary-foreground" 
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                All Languages
-              </button>
-            </div>
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <h3 className="text-lg font-semibold text-foreground">Voice Selection</h3>
           </div>
-          
-          <Select value={selectedVoice} onValueChange={setSelectedVoice}>
-            <SelectTrigger className="w-full bg-secondary border-border">
-              <SelectValue placeholder="Select a voice" />
-            </SelectTrigger>
-            <SelectContent className="max-h-[300px]">
-              {Object.entries(groupedVoices).map(([group, groupVoices]) => (
-                <div key={group}>
-                  <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground bg-secondary/50 sticky top-0">
-                    {group} ({groupVoices.length})
-                  </div>
-                  {groupVoices.map((voice) => (
-                    <SelectItem key={voice.name} value={voice.name} className="pl-4">
-                      <div className="flex flex-col">
-                        <span>{voice.name.replace(/Microsoft |Google |Apple /, '')}</span>
-                        <span className="text-xs text-muted-foreground">{voice.lang}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </div>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <p className="text-xs text-muted-foreground">
-            {filteredVoices.length} voices available
+          <p className="text-sm text-muted-foreground mb-4">
+            Choose from high-quality Microsoft Edge neural voices. Free and no API key required.
           </p>
+          
+          <div>
+            <label htmlFor="voice-select" className="block text-sm font-medium text-muted-foreground mb-2">
+              Select Voice
+            </label>
+            <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+              <SelectTrigger className="w-full bg-secondary border-border">
+                <SelectValue placeholder="Select a voice" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                {edgeVoices.map((voice) => (
+                  <SelectItem key={voice.id} value={voice.id}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{voice.name}</span>
+                      <span className="text-xs text-muted-foreground">{voice.description}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-2">
+              Powered by Microsoft Edge-TTS • Free and unlimited
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -705,7 +622,12 @@ export function TextToSpeech() {
               <Button
                 variant={viewMode === 'full-text' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setViewMode('full-text')}
+                onClick={() => {
+                  if (isPlaying) {
+                    handlePause()
+                  }
+                  setViewMode('full-text')
+                }}
               >
                 <FileText className="w-4 h-4 mr-2" />
                 Full Text
@@ -713,7 +635,12 @@ export function TextToSpeech() {
               <Button
                 variant={viewMode === 'netflix' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setViewMode('netflix')}
+                onClick={() => {
+                  if (isPlaying) {
+                    handlePause()
+                  }
+                  setViewMode('netflix')
+                }}
               >
                 <Subtitles className="w-4 h-4 mr-2" />
                 Focus Mode
@@ -741,11 +668,13 @@ export function TextToSpeech() {
             
             <Button
               onClick={isPlaying ? handlePause : handlePlay}
-              disabled={!text.trim() && !isPaused}
+              disabled={(!text.trim() && !isPaused) || isLoadingAudio}
               className="h-16 w-16 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground"
               aria-label={isPlaying ? "Pause" : "Play"}
             >
-              {isPlaying ? (
+              {isLoadingAudio ? (
+                <Loader2 className="h-7 w-7 animate-spin" />
+              ) : isPlaying ? (
                 <Pause className="h-7 w-7" />
               ) : (
                 <Play className="h-7 w-7 ml-1" />
@@ -808,51 +737,6 @@ export function TextToSpeech() {
             </div>
           </div>
 
-          {/* Pitch Control */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Music className="h-4 w-4" />
-                <span>Pitch</span>
-              </div>
-              <span className="text-sm font-medium text-foreground">{pitch.toFixed(1)}</span>
-            </div>
-            <Slider
-              value={[pitch]}
-              onValueChange={handlePitchChange}
-              min={0.5}
-              max={2}
-              step={0.1}
-              className="w-full"
-              aria-label="Pitch"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <button
-                onClick={() => setPitch(0.5)}
-                className={`transition-colors hover:text-foreground ${pitch === 0.5 ? "text-primary font-medium" : ""}`}
-              >
-                Deep
-              </button>
-              <button
-                onClick={() => setPitch(1)}
-                className={`transition-colors hover:text-foreground ${pitch === 1 ? "text-primary font-medium" : ""}`}
-              >
-                Normal
-              </button>
-              <button
-                onClick={() => setPitch(1.5)}
-                className={`transition-colors hover:text-foreground ${pitch === 1.5 ? "text-primary font-medium" : ""}`}
-              >
-                Higher
-              </button>
-              <button
-                onClick={() => setPitch(2)}
-                className={`transition-colors hover:text-foreground ${pitch === 2 ? "text-primary font-medium" : ""}`}
-              >
-                Highest
-              </button>
-            </div>
-          </div>
 
           {/* Volume Control */}
           <div className="space-y-3">
@@ -878,7 +762,7 @@ export function TextToSpeech() {
 
       {/* Info */}
       <p className="text-center text-xs text-muted-foreground">
-        Powered by Web Speech API. Voice availability depends on your browser and system.
+        Powered by Microsoft Edge-TTS. Free, high-quality neural voice synthesis.
       </p>
     </div>
   )
