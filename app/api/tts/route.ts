@@ -58,10 +58,25 @@ export async function POST(request: NextRequest) {
       // Combine all chunks into a single buffer
       const buffer = Buffer.concat(chunks)
       
+      // Validate buffer
+      if (!buffer || buffer.length === 0) {
+        throw new Error('Generated audio is empty')
+      }
+      
+      // Validate MP3 header (should start with ID3 tag or MP3 sync word)
+      const isValidAudio = buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0 || // MP3 sync word
+                          buffer.slice(0, 3).toString() === 'ID3' // ID3 tag
+      
+      if (!isValidAudio && buffer.length > 10) {
+        console.warn('Audio buffer may not be valid MP3. First bytes:', buffer.slice(0, 10))
+        // Still try to return it, as some formats might work
+      }
+      
       return new NextResponse(buffer, {
         headers: {
           'Content-Type': 'audio/mpeg',
           'Content-Length': buffer.length.toString(),
+          'Cache-Control': 'no-cache',
         },
       })
     } catch (streamError: any) {
