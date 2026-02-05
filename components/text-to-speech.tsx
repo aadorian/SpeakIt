@@ -46,6 +46,27 @@ export function TextToSpeech() {
     { id: "en-CA-ClaraNeural", name: "Clara", description: "Warm, conversational female (CA)" },
   ]
 
+  // Function to remove LaTeX citations from text
+  const removeLatexCitations = useCallback((text: string): string => {
+    // Remove LaTeX citation commands: \cite{}, \citep{}, \citet{}, \citeauthor{}, \citeyear{}, etc.
+    let cleaned = text.replace(/\\cite[a-z]*\{[^}]*\}/g, '')
+    
+    // Remove numeric citations in brackets: [1], [1,2,3], [1-5], etc.
+    cleaned = cleaned.replace(/\[\d+[,\-\d\s]*\]/g, '')
+    
+    // Remove author-year citations in parentheses: (Author, 2023), (Author et al., 2023)
+    cleaned = cleaned.replace(/\([A-Z][a-zA-Z\s,]+(?:et al\.)?,\s*\d{4}[a-z]?\)/g, '')
+    
+    // Remove standalone citation numbers: ^1, ^[1], (1), etc.
+    cleaned = cleaned.replace(/\^\[?\d+\]?/g, '')
+    cleaned = cleaned.replace(/\(\d+\)/g, '')
+    
+    // Clean up multiple spaces and trim
+    cleaned = cleaned.replace(/\s+/g, ' ').trim()
+    
+    return cleaned
+  }, [])
+
   // Auto-scroll to current word
   useEffect(() => {
     if (viewMode === 'full-text' && highlightRef.current && !isUserScrolling && textContainerRef.current) {
@@ -382,14 +403,34 @@ export function TextToSpeech() {
               </label>
               <Textarea
                 id="text-input"
-                placeholder="Type or paste your text here..."
+                placeholder="Type or paste your text here... (LaTeX citations will be automatically removed)"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
+                onPaste={(e) => {
+                  e.preventDefault()
+                  const pastedText = e.clipboardData.getData('text')
+                  const cleanedText = removeLatexCitations(pastedText)
+                  
+                  // Insert cleaned text at cursor position
+                  const textarea = e.currentTarget
+                  const start = textarea.selectionStart
+                  const end = textarea.selectionEnd
+                  const newText = text.substring(0, start) + cleanedText + text.substring(end)
+                  setText(newText)
+                  
+                  // Set cursor position after inserted text
+                  setTimeout(() => {
+                    textarea.selectionStart = textarea.selectionEnd = start + cleanedText.length
+                  }, 0)
+                }}
                 className="min-h-[200px] resize-none bg-secondary border-border text-foreground placeholder:text-muted-foreground focus:ring-primary text-lg leading-relaxed"
               />
               <div className="flex justify-between items-center mt-3">
                 <span className="text-xs text-muted-foreground">
-                  {text.length} characters
+                  {(() => {
+                    const wordCount = text.trim() ? text.trim().split(/\s+/).filter(word => word.length > 0).length : 0
+                    return `${wordCount} ${wordCount === 1 ? 'word' : 'words'}`
+                  })()}
                 </span>
                 {text.length > 0 && (
                   <button
@@ -615,7 +656,7 @@ export function TextToSpeech() {
             <h3 className="text-lg font-semibold text-foreground">Voice Selection</h3>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            Choose from high-quality Microsoft Edge neural voices. Free and no API key required.
+            Choose from high-quality Microsoft Edge neural voices. Free to use; no API key required.
           </p>
           
           <div>
@@ -638,7 +679,7 @@ export function TextToSpeech() {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground mt-2">
-              Powered by Microsoft Edge-TTS • Free and unlimited
+              Powered by Microsoft Edge-TTS • Free with unlimited usage
             </p>
           </div>
         </CardContent>
@@ -792,7 +833,7 @@ export function TextToSpeech() {
 
       {/* Info */}
       <p className="text-center text-xs text-muted-foreground">
-        Powered by Microsoft Edge-TTS. Free, high-quality neural voice synthesis.
+        Powered by Microsoft Edge-TTS. Provides free, high-quality neural voice synthesis.
       </p>
     </div>
   )

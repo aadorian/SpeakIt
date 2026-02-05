@@ -35,7 +35,7 @@ export default function Home() {
       <footer className="border-t border-border mt-auto">
         <div className="container mx-auto px-4 py-6">
           <p className="text-center text-sm text-muted-foreground">
-            Free text-to-speech converter using your browser&apos;s built-in speech synthesis
+            Free text-to-speech converter powered by Microsoft Edge-TTS neural voices
           </p>
         </div>
       </footer>
